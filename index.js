@@ -495,8 +495,7 @@ bot.start(async (ctx) => {
         `👋 Welcome to ${name}`,
         ``,
         `Owner DM add format:`,
-        `/add 1001 | Rem | Legendary | Re:Zero`,
-        `(attach photo with the caption above)`,
+        `/add`,
         ``,
         `Commands:`,
         `/profile`,
@@ -990,21 +989,24 @@ app.get("/", (_, res) => {
 
 // -------------------- LAUNCH --------------------
 async function main() {
-  await mongoose.connect(MONGODB_URI);
-  console.log("MongoDB connected");
+  try {
+    await mongoose.connect(MONGODB_URI);
+    console.log("MongoDB connected");
 
-  await bot.launch();
-  console.log("Bot launched");
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`HTTP server running on :${PORT} [${NODE_ENV}]`);
+    });
 
-  app.listen(PORT, () => {
-    console.log(`HTTP server running on :${PORT} [${NODE_ENV}]`);
-  });
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    console.log("Webhook deleted / polling mode ready");
+
+    await bot.launch();
+    console.log("Bot launched");
+  } catch (err) {
+    console.error("MAIN ERROR:", err);
+    process.exit(1);
+  }
 }
-
-main().catch((err) => {
-  console.error("FATAL:", err);
-  process.exit(1);
-});
 
 // -------------------- SHUTDOWN --------------------
 process.once("SIGINT", async () => {
