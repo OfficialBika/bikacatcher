@@ -658,11 +658,12 @@ bot.on("photo", async (ctx, next) => {
     // 2) AUTO PARSE FORWARDED / SOURCE CARD
     // ----------------------------
     const autoParsed = parseForwardCharacter(caption);
-    if (!autoParsed) {
+if (!autoParsed) {
+  console.log("FORWARD CAPTION RAW =>", JSON.stringify(caption));
   return ctx.reply(
-    "❌ Forward parse failed.\nMake sure caption includes:\nAnime line\nID: Name line\nRARITY: line"
+    "❌ Forward parse failed.\n\nCaption received:\n\n" + caption
   );
-    }
+}
 
     const normalizedName = normalizeName(autoParsed.name);
 
