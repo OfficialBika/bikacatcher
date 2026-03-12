@@ -153,11 +153,14 @@ function normalizeForwardText(rawText = "") {
 }
 
 function parseForwardCharacter(rawText = "") {
-  const text = String(rawText || "").replace(/\r/g, "").trim();
+  const text = String(rawText || "")
+    .replace(/\r/g, "")
+    .replace(/\u00A0/g, " ")
+    .trim();
 
   if (!text) return null;
 
-  // 1) RARITY
+  // RARITY
   const rarityMatch = text.match(/RARITY\s*[:：]\s*([A-Za-z]+)/i);
   let rarity = "";
   if (rarityMatch) {
@@ -168,21 +171,20 @@ function parseForwardCharacter(rawText = "") {
     if (valid) rarity = valid;
   }
 
-  // 2) ID + NAME  (example: 58: Uta [☃️])
-  const idNameMatch = text.match(/(?:^|\n)\s*(\d+)\s*[:：]\s*([^\n]+)/);
+  // ID + NAME  (supports weird spaces)
+  const idNameMatch = text.match(/(?:^|\n)\s*(\d+)\s*[:：]\s*([^\n]+)/m);
   let cardId = "";
   let name = "";
   if (idNameMatch) {
-    cardId = idNameMatch[1].trim();
-    name = idNameMatch[2].trim();
+    cardId = String(idNameMatch[1] || "").trim();
+    name = String(idNameMatch[2] || "").trim();
   }
 
-  // 3) ANIME
-  // We take the line immediately before the ID:NAME line
+  // ANIME = nearest useful line before the ID line
   let anime = "";
-  if (idNameMatch) {
-    const beforeId = text.slice(0, idNameMatch.index);
-    const lines = beforeId
+  if (idNameMatch && typeof idNameMatch.index === "number") {
+    const before = text.slice(0, idNameMatch.index);
+    const lines = before
       .split("\n")
       .map((x) => x.trim())
       .filter(Boolean)
@@ -196,16 +198,15 @@ function parseForwardCharacter(rawText = "") {
       });
 
     if (lines.length) {
-      anime = lines[lines.length - 1].trim();
+      anime = lines[lines.length - 1];
     }
   }
 
-  if (!anime || !cardId || !name || !rarity) {
-    return null;
-  }
+  if (!anime || !cardId || !name || !rarity) return null;
 
   return { anime, cardId, name, rarity };
 }
+
 function parseAddCaption(caption = "") {
   // Expected:
   // /add 1001 | Rem | Legendary | Re:Zero
