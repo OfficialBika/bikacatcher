@@ -1003,11 +1003,8 @@ async function maybeDropCharacter(ctx) {
   if (!["group", "supergroup"].includes(ctx.chat?.type)) return;
   if (!ctx.message?.text && !ctx.message?.caption) return;
 
-  const text = String(ctx.message?.text || ctx.message?.caption || "");
-  if (!text.trim()) return;
-
-  // ignore commands
- // if (/^[/.!]/.test(text.trim())) return;
+  const text = String(ctx.message?.text || ctx.message?.caption || "").trim();
+  if (!text) return;
 
   const approved = await isApprovedGroup(ctx.chat.id);
   if (!approved) return;
@@ -1015,11 +1012,7 @@ async function maybeDropCharacter(ctx) {
   const groupDoc = await ensureGroupDoc(ctx.chat);
   if (!groupDoc) return;
 
-  // active unclaimed drop exists => do not spawn another
-  if (groupDoc.activeDrop && groupDoc.activeDrop.cardId && !groupDoc.activeDrop.isClaimed) {
-    return;
-  }
-
+  // message count always continues
   groupDoc.messageCount = Number(groupDoc.messageCount || 0) + 1;
 
   if (groupDoc.messageCount < MESSAGE_DROP_COUNT) {
@@ -1027,6 +1020,7 @@ async function maybeDropCharacter(ctx) {
     return;
   }
 
+  // 50 reached => reset count
   groupDoc.messageCount = 0;
 
   const totalCards = await Photo.countDocuments();
@@ -1037,6 +1031,7 @@ async function maybeDropCharacter(ctx) {
 
   const randomIndex = Math.floor(Math.random() * totalCards);
   const photoDoc = await Photo.findOne().skip(randomIndex).lean();
+
   if (!photoDoc) {
     await groupDoc.save();
     return;
@@ -1044,8 +1039,9 @@ async function maybeDropCharacter(ctx) {
 
   const emoji = getRarityEmoji(photoDoc.rarity);
   const caption = [
-    `${emoji} A CHARACTER HAS SPAWNED IN THE CHAT!`,
+    `${emoji} A NEW CHARACTER HAS SPAWNED IN THE CHAT!`,
     ``,
+    `Old unclaimed drop has expired.`,
     `Rarity: ${photoDoc.rarity}`,
     `Anime: ${photoDoc.anime}`,
     `Catch using /bika [name]`,
@@ -1054,6 +1050,9 @@ async function maybeDropCharacter(ctx) {
   try {
     const sent = await ctx.replyWithPhoto(photoDoc.fileId, { caption });
 
+    // overwrite old drop completely
+    // => old card auto expires
+    // => only latest card is valid
     groupDoc.activeDrop = {
       cardId: photoDoc.cardId,
       name: photoDoc.name,
@@ -1065,6 +1064,7 @@ async function maybeDropCharacter(ctx) {
       isClaimed: false,
       droppedAt: new Date(),
     };
+
     await groupDoc.save();
   } catch (err) {
     console.error("DROP ERROR:", err);
