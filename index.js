@@ -1020,7 +1020,7 @@ async function maybeDropCharacter(ctx) {
     return;
   }
 
-  // 50 reached => reset count
+  // threshold reached => reset count
   groupDoc.messageCount = 0;
 
   const totalCards = await Photo.countDocuments();
@@ -1051,8 +1051,6 @@ async function maybeDropCharacter(ctx) {
     const sent = await ctx.replyWithPhoto(photoDoc.fileId, { caption });
 
     // overwrite old drop completely
-    // => old card auto expires
-    // => only latest card is valid
     groupDoc.activeDrop = {
       cardId: photoDoc.cardId,
       name: photoDoc.name,
