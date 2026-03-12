@@ -160,49 +160,60 @@ function parseForwardCharacter(rawText = "") {
 
   if (!text) return null;
 
-  // RARITY
-  const rarityMatch = text.match(/RARITY\s*[:：]\s*([A-Za-z]+)/i);
-  let rarity = "";
-  if (rarityMatch) {
-    const found = rarityMatch[1].trim();
-    const valid = RARITY_ORDER.find(
-      (r) => r.toLowerCase() === found.toLowerCase()
-    );
-    if (valid) rarity = valid;
-  }
+  const lines = text
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
 
-  // ID + NAME  (supports weird spaces)
-  const idNameMatch = text.match(/(?:^|\n)\s*(\d+)\s*[:：]\s*([^\n]+)/m);
+  let anime = "";
   let cardId = "";
   let name = "";
-  if (idNameMatch) {
-    cardId = String(idNameMatch[1] || "").trim();
-    name = String(idNameMatch[2] || "").trim();
-  }
+  let rarity = "";
 
-  // ANIME = nearest useful line before the ID line
-  let anime = "";
-  if (idNameMatch && typeof idNameMatch.index === "number") {
-    const before = text.slice(0, idNameMatch.index);
-    const lines = before
-      .split("\n")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .filter((line) => {
-        const lower = line.toLowerCase();
-        return !(
-          lower.includes("owo! check out this character") ||
-          lower.includes("caught how many times") ||
-          lower.includes("rarity")
-        );
-      });
-
-    if (lines.length) {
-      anime = lines[lines.length - 1];
+  // 1) Find ID + NAME line first
+  let idLineIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.match(/^(\d+)\s*[:：]\s*(.+)$/);
+    if (m) {
+      cardId = m[1].trim();
+      name = m[2].trim();
+      idLineIndex = i;
+      break;
     }
   }
 
-  if (!anime || !cardId || !name || !rarity) return null;
+  // 2) Find anime = nearest useful line before ID line
+  if (idLineIndex > 0) {
+    for (let i = idLineIndex - 1; i >= 0; i--) {
+      const lower = lines[i].toLowerCase();
+      if (
+        lower.includes("owo! check out this character") ||
+        lower.includes("caught how many times") ||
+        lower.includes("rarity")
+      ) {
+        continue;
+      }
+      anime = lines[i].trim();
+      break;
+    }
+  }
+
+  // 3) Find rarity by searching any valid rarity word in any line
+  for (const line of lines) {
+    for (const r of RARITY_ORDER) {
+      const re = new RegExp(`\\b${r}\\b`, "i");
+      if (re.test(line)) {
+        rarity = r;
+        break;
+      }
+    }
+    if (rarity) break;
+  }
+
+  if (!anime || !cardId || !name || !rarity) {
+    return null;
+  }
 
   return { anime, cardId, name, rarity };
 }
