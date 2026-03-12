@@ -151,61 +151,61 @@ function normalizeForwardText(rawText = "") {
     .map((line) => line.trim())
     .filter(Boolean);
 }
-function parseForwardCharacter(rawText = "") {
-  const lines = String(rawText)
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
 
-  let anime = "";
+function parseForwardCharacter(rawText = "") {
+  const text = String(rawText || "").replace(/\r/g, "").trim();
+
+  if (!text) return null;
+
+  // 1) RARITY
+  const rarityMatch = text.match(/RARITY\s*[:：]\s*([A-Za-z]+)/i);
+  let rarity = "";
+  if (rarityMatch) {
+    const found = rarityMatch[1].trim();
+    const valid = RARITY_ORDER.find(
+      (r) => r.toLowerCase() === found.toLowerCase()
+    );
+    if (valid) rarity = valid;
+  }
+
+  // 2) ID + NAME  (example: 58: Uta [☃️])
+  const idNameMatch = text.match(/(?:^|\n)\s*(\d+)\s*[:：]\s*([^\n]+)/);
   let cardId = "";
   let name = "";
-  let rarity = "";
+  if (idNameMatch) {
+    cardId = idNameMatch[1].trim();
+    name = idNameMatch[2].trim();
+  }
 
-  for (const line of lines) {
-    const lower = line.toLowerCase();
+  // 3) ANIME
+  // We take the line immediately before the ID:NAME line
+  let anime = "";
+  if (idNameMatch) {
+    const beforeId = text.slice(0, idNameMatch.index);
+    const lines = beforeId
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .filter((line) => {
+        const lower = line.toLowerCase();
+        return !(
+          lower.includes("owo! check out this character") ||
+          lower.includes("caught how many times") ||
+          lower.includes("rarity")
+        );
+      });
 
-    // rarity line, supports ":" and "："
-    const rarityMatch = line.match(/RARITY\s*[:：]\s*([A-Za-z]+)/i);
-    if (rarityMatch) {
-      const found = rarityMatch[1].trim();
-      const valid = RARITY_ORDER.find(
-        (r) => r.toLowerCase() === found.toLowerCase()
-      );
-      if (valid) rarity = valid;
-      continue;
-    }
-
-    // id:name line, supports ":" and "："
-    const idNameMatch = line.match(/^(\d+)\s*[:：]\s*(.+)$/);
-    if (idNameMatch) {
-      cardId = idNameMatch[1].trim();
-      name = idNameMatch[2].trim();
-      continue;
-    }
-
-    // skip obvious junk lines
-    const isBadLine =
-      lower.includes("owo! check out this character") ||
-      lower.includes("caught how many times") ||
-      lower.includes("rarity") ||
-      lower.includes("classic") ||
-      lower.includes("summer") ||
-      lower.includes("winter") ||
-      lower.includes("sacred") ||
-      /^\d+\s*[:：]/.test(line);
-
-    if (!anime && !isBadLine) {
-      anime = line.trim();
+    if (lines.length) {
+      anime = lines[lines.length - 1].trim();
     }
   }
 
-  if (!anime || !cardId || !name || !rarity) return null;
+  if (!anime || !cardId || !name || !rarity) {
+    return null;
+  }
 
   return { anime, cardId, name, rarity };
 }
-
 function parseAddCaption(caption = "") {
   // Expected:
   // /add 1001 | Rem | Legendary | Re:Zero
