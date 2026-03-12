@@ -151,9 +151,12 @@ function normalizeForwardText(rawText = "") {
     .map((line) => line.trim())
     .filter(Boolean);
 }
-
 function parseForwardCharacter(rawText = "") {
-  const lines = normalizeForwardText(rawText);
+  const lines = String(rawText)
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   let anime = "";
   let cardId = "";
@@ -163,8 +166,8 @@ function parseForwardCharacter(rawText = "") {
   for (const line of lines) {
     const lower = line.toLowerCase();
 
-    // rarity line only
-    const rarityMatch = line.match(/RARITY\s*:\s*([A-Za-z]+)/i);
+    // rarity line, supports ":" and "："
+    const rarityMatch = line.match(/RARITY\s*[:：]\s*([A-Za-z]+)/i);
     if (rarityMatch) {
       const found = rarityMatch[1].trim();
       const valid = RARITY_ORDER.find(
@@ -174,28 +177,24 @@ function parseForwardCharacter(rawText = "") {
       continue;
     }
 
-    // id:name line only
-    const idNameMatch = line.match(/^(\d+)\s*:\s*(.+)$/);
+    // id:name line, supports ":" and "："
+    const idNameMatch = line.match(/^(\d+)\s*[:：]\s*(.+)$/);
     if (idNameMatch) {
       cardId = idNameMatch[1].trim();
       name = idNameMatch[2].trim();
-
-      // Remove trailing decorations like [🏖️], [💠], (x1), etc
-      //name = name
-      //  .replace(/\s*\[[^\]]*]$/g, "")
-       // .replace(/\s*\([^)]+\)$/g, "")
-       // .trim(); //
-
       continue;
     }
 
-    // anime line only
+    // skip obvious junk lines
     const isBadLine =
       lower.includes("owo! check out this character") ||
       lower.includes("caught how many times") ||
-      lower.includes("rarity:") ||
-      /^\d+\s*:/.test(line) ||
-      /^[^\p{L}\p{N}]+$/u.test(line); // emoji/symbol only line
+      lower.includes("rarity") ||
+      lower.includes("classic") ||
+      lower.includes("summer") ||
+      lower.includes("winter") ||
+      lower.includes("sacred") ||
+      /^\d+\s*[:：]/.test(line);
 
     if (!anime && !isBadLine) {
       anime = line.trim();
@@ -204,12 +203,7 @@ function parseForwardCharacter(rawText = "") {
 
   if (!anime || !cardId || !name || !rarity) return null;
 
-  return {
-    anime,
-    cardId,
-    name,
-    rarity,
-  };
+  return { anime, cardId, name, rarity };
 }
 
 function parseAddCaption(caption = "") {
@@ -663,7 +657,11 @@ bot.on("photo", async (ctx, next) => {
     // 2) AUTO PARSE FORWARDED / SOURCE CARD
     // ----------------------------
     const autoParsed = parseForwardCharacter(caption);
-    if (!autoParsed) return next();
+    if (!autoParsed) {
+  return ctx.reply(
+    "❌ Forward parse failed.\nMake sure caption includes:\nAnime line\nID: Name line\nRARITY: line"
+  );
+    }
 
     const normalizedName = normalizeName(autoParsed.name);
 
