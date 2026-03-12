@@ -144,6 +144,74 @@ function makeProgressBar(percent, size = 10) {
   return "█".repeat(filled) + "░".repeat(size - filled);
 }
 
+function normalizeForwardText(rawText = "") {
+  return String(rawText)
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function parseForwardCharacter(rawText = "") {
+  const lines = normalizeForwardText(rawText);
+
+  let anime = "";
+  let cardId = "";
+  let name = "";
+  let rarity = "";
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    // rarity line only
+    const rarityMatch = line.match(/RARITY\s*:\s*([A-Za-z]+)/i);
+    if (rarityMatch) {
+      const found = rarityMatch[1].trim();
+      const valid = RARITY_ORDER.find(
+        (r) => r.toLowerCase() === found.toLowerCase()
+      );
+      if (valid) rarity = valid;
+      continue;
+    }
+
+    // id:name line only
+    const idNameMatch = line.match(/^(\d+)\s*:\s*(.+)$/);
+    if (idNameMatch) {
+      cardId = idNameMatch[1].trim();
+      name = idNameMatch[2].trim();
+
+      // Remove trailing decorations like [🏖️], [💠], (x1), etc
+      //name = name
+      //  .replace(/\s*\[[^\]]*]$/g, "")
+       // .replace(/\s*\([^)]+\)$/g, "")
+       // .trim(); //
+
+      continue;
+    }
+
+    // anime line only
+    const isBadLine =
+      lower.includes("owo! check out this character") ||
+      lower.includes("caught how many times") ||
+      lower.includes("rarity:") ||
+      /^\d+\s*:/.test(line) ||
+      /^[^\p{L}\p{N}]+$/u.test(line); // emoji/symbol only line
+
+    if (!anime && !isBadLine) {
+      anime = line.trim();
+    }
+  }
+
+  if (!anime || !cardId || !name || !rarity) return null;
+
+  return {
+    anime,
+    cardId,
+    name,
+    rarity,
+  };
+}
+
 function parseAddCaption(caption = "") {
   // Expected:
   // /add 1001 | Rem | Legendary | Re:Zero
@@ -230,7 +298,7 @@ function buildHaremCaption(userDoc, page = 1, pageSize = HAREM_PAGE_SIZE) {
       const uniqueCount = animeCards.length;
       const totalCount = animeCards.reduce((a, b) => a + Number(b.count || 0), 0);
       lines.push(`⚜️ ${anime} (${uniqueCount}/${totalCount})`);
-      lines.push("────────────────────────");
+      lines.push("─────────────────");
 
       for (const card of animeCards.sort((a, b) => Number(a.cardId) - Number(b.cardId))) {
         const emoji = getRarityEmoji(card.rarity);
@@ -527,68 +595,108 @@ bot.command("approve", async (ctx) => {
 });
 
 // -------------------- OWNER ADD PHOTO IN DM --------------------
+
 bot.on("photo", async (ctx, next) => {
-  if (ctx.chat?.type !== "private") return next();
-  if (!isOwner(ctx.from?.id)) return next();
-
-  const caption = String(ctx.message?.caption || "");
-  if (!caption.toLowerCase().startsWith("/add")) return next();
-
-  const parsed = parseAddCaption(caption);
-  if (!parsed) {
-    return ctx.reply(
-      [
-        "❌ Invalid add format.",
-        "Use this exact caption with photo:",
-        "/add 1001 | Rem | Legendary | Re:Zero",
-        "",
-        "Allowed rarities:",
-        RARITY_ORDER.join(", "),
-      ].join("\n")
-    );
-  }
-
-  const photos = ctx.message?.photo || [];
-  const best = photos[photos.length - 1];
-  const fileId = best?.file_id;
-
-  if (!fileId) {
-    return ctx.reply("❌ No photo file_id found.");
-  }
-
-  const normalizedName = normalizeName(parsed.name);
-
   try {
-    const existing = await Photo.findOne({ cardId: parsed.cardId });
+    if (ctx.chat?.type !== "private") return next();
+    if (!isOwner(ctx.from?.id)) return next();
+
+    const caption = String(ctx.message?.caption || "").trim();
+    const photos = ctx.message?.photo || [];
+    const best = photos[photos.length - 1];
+    const fileId = best?.file_id;
+
+    if (!fileId) return next();
+
+    // ----------------------------
+    // 1) MANUAL /ADD FORMAT
+    // ----------------------------
+    if (caption.toLowerCase().startsWith("/add")) {
+      const parsed = parseAddCaption(caption);
+
+      if (!parsed) {
+        return ctx.reply(
+          [
+            "❌ Invalid add format.",
+            "Use this exact caption with photo:",
+            "/add 1001 | Rem | Legendary | Re:Zero",
+            "",
+            "Allowed rarities:",
+            RARITY_ORDER.join(", "),
+          ].join("\n")
+        );
+      }
+
+      const normalizedName = normalizeName(parsed.name);
+
+      const existing = await Photo.findOne({ cardId: parsed.cardId });
+      if (existing) {
+        existing.name = parsed.name;
+        existing.normalizedName = normalizedName;
+        existing.rarity = parsed.rarity;
+        existing.anime = parsed.anime;
+        existing.fileId = fileId;
+        existing.addedBy = ctx.from.id;
+        await existing.save();
+
+        return ctx.reply(
+          `♻️ Card updated.\nID: ${parsed.cardId}\nName: ${parsed.name}\nRarity: ${parsed.rarity}\nAnime: ${parsed.anime}`
+        );
+      }
+
+      await Photo.create({
+        cardId: parsed.cardId,
+        name: parsed.name,
+        normalizedName,
+        rarity: parsed.rarity,
+        anime: parsed.anime,
+        fileId,
+        addedBy: ctx.from.id,
+      });
+
+      return ctx.reply(
+        `✅ Card added.\nID: ${parsed.cardId}\nName: ${parsed.name}\nRarity: ${parsed.rarity}\nAnime: ${parsed.anime}`
+      );
+    }
+
+    // ----------------------------
+    // 2) AUTO PARSE FORWARDED / SOURCE CARD
+    // ----------------------------
+    const autoParsed = parseForwardCharacter(caption);
+    if (!autoParsed) return next();
+
+    const normalizedName = normalizeName(autoParsed.name);
+
+    const existing = await Photo.findOne({ cardId: autoParsed.cardId });
     if (existing) {
-      existing.name = parsed.name;
+      existing.name = autoParsed.name;
       existing.normalizedName = normalizedName;
-      existing.rarity = parsed.rarity;
-      existing.anime = parsed.anime;
+      existing.rarity = autoParsed.rarity;
+      existing.anime = autoParsed.anime;
       existing.fileId = fileId;
       existing.addedBy = ctx.from.id;
       await existing.save();
 
       return ctx.reply(
-        `♻️ Card updated.\nID: ${parsed.cardId}\nName: ${parsed.name}\nRarity: ${parsed.rarity}\nAnime: ${parsed.anime}`
+        `♻️ Forward card updated.\nID: ${autoParsed.cardId}\nName: ${autoParsed.name}\nRarity: ${autoParsed.rarity}\nAnime: ${autoParsed.anime}`
       );
     }
 
     await Photo.create({
-      cardId: parsed.cardId,
-      name: parsed.name,
+      cardId: autoParsed.cardId,
+      name: autoParsed.name,
       normalizedName,
-      rarity: parsed.rarity,
-      anime: parsed.anime,
+      rarity: autoParsed.rarity,
+      anime: autoParsed.anime,
       fileId,
       addedBy: ctx.from.id,
     });
 
     return ctx.reply(
-      `✅ Card added.\nID: ${parsed.cardId}\nName: ${parsed.name}\nRarity: ${parsed.rarity}\nAnime: ${parsed.anime}`
+      `✅ Forward card added.\nID: ${autoParsed.cardId}\nName: ${autoParsed.name}\nRarity: ${autoParsed.rarity}\nAnime: ${autoParsed.anime}`
     );
   } catch (err) {
-    console.error("ADD PHOTO ERROR:", err);
+    console.error("PHOTO ADD / FORWARD PARSE ERROR:", err);
     return ctx.reply("❌ Failed to save card.");
   }
 });
@@ -888,7 +996,7 @@ async function maybeDropCharacter(ctx) {
   if (!text.trim()) return;
 
   // ignore commands
-  if (/^[/.!]/.test(text.trim())) return;
+ // if (/^[/.!]/.test(text.trim())) return;
 
   const approved = await isApprovedGroup(ctx.chat.id);
   if (!approved) return;
