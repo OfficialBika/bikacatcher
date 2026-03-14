@@ -113,9 +113,12 @@ function normalizeName(text = "") {
   return String(text)
     .toLowerCase()
     .trim()
+    .replace(/\[[^\]]*]/g, " ")
+    .replace(/\([^)]*\)/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[’']/g, "")
-    .replace(/[^a-z0-9\s\-]/g, "");
+    .replace(/[^a-z0-9\s\-]/g, "")
+    .trim();
 }
 
 function safeChatTitle(chat) {
@@ -362,7 +365,7 @@ function buildHaremCaption(userDoc, page = 1, pageSize = HAREM_PAGE_SIZE) {
       const uniqueCount = animeCards.length;
       const totalCount = animeCards.reduce((a, b) => a + Number(b.count || 0), 0);
       lines.push(`⚜️ ${anime} (${uniqueCount}/${totalCount})`);
-      lines.push("─────────────────");
+      lines.push("────────────");
       for (const card of animeCards.sort((a, b) => Number(a.cardId) - Number(b.cardId))) {
         const emoji = getRarityEmoji(card.rarity);
         const suffix = Number(card.count || 1) > 1 ? ` × ${Number(card.count || 1)}` : "";
@@ -1093,11 +1096,17 @@ async function handleClaim(ctx, guessRaw) {
   }
 
   const guess = normalizeName(guessText);
-  const target = groupDoc.activeDrop.normalizedName;
-  if (guess !== target) {
-    return ctx.reply(buildWrongNameText(guessText));
-  }
+const target = groupDoc.activeDrop.normalizedName;
 
+// allow exact match OR prefix match
+// minimum 3 chars so 1-letter / 2-letter guesses won't win
+const isMatch =
+  guess.length >= 3 &&
+  (guess === target || target.startsWith(guess));
+
+if (!isMatch) {
+  return ctx.reply(buildWrongNameText(guessText));
+}
   const claimerDisplay = getTelegramFullName(ctx.from) || ctx.from.username || String(ctx.from.id);
 
   const updated = await Group.findOneAndUpdate(
