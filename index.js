@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * BIKA Character Catcher Bot —
+ * BIKA Character Catcher Bot — FINAL
  */
 
 require("dotenv").config();
@@ -14,6 +14,10 @@ const BOT_TOKEN = String(process.env.BOT_TOKEN || "").trim();
 const MONGODB_URI = String(process.env.MONGODB_URI || "").trim();
 const OWNER_ID = Number(process.env.OWNER_ID || 0);
 const OWNER_USERNAME = String(process.env.OWNER_USERNAME || "@Official_Bika").trim();
+const BOT_USERNAME = String(process.env.BOT_USERNAME || "BikaCharacterBot")
+  .replace(/^@/, "")
+  .trim();
+
 const PORT = Number(process.env.PORT || 8080);
 const NODE_ENV = String(process.env.NODE_ENV || "production").trim();
 const MESSAGE_DROP_COUNT = Math.max(1, Number(process.env.MESSAGE_DROP_COUNT || 50));
@@ -87,9 +91,22 @@ function escapeHtml(text = "") {
     .replaceAll(">", "&gt;");
 }
 
+function getTelegramFullName(user) {
+  return [user?.first_name || "", user?.last_name || ""].join(" ").trim();
+}
+
+function getStoredFullName(user) {
+  return [user?.firstName || "", user?.lastName || ""].join(" ").trim();
+}
+
 function mentionUser(user) {
-  const first = escapeHtml(user?.first_name || user?.username || "User");
-  return `<a href="tg://user?id=${user?.id}">${first}</a>`;
+  const display = getTelegramFullName(user) || user?.username || "User";
+  return `<a href="tg://user?id=${user?.id}">${escapeHtml(display)}</a>`;
+}
+
+function mentionStoredUser(user) {
+  const display = getStoredFullName(user) || user?.username || `User ${user?.userId || ""}`;
+  return `<a href="tg://user?id=${user?.userId}">${escapeHtml(display)}</a>`;
 }
 
 function normalizeName(text = "") {
@@ -224,7 +241,7 @@ function getRarityEmoji(rarity) {
 async function getGlobalCardStats(cardId) {
   const users = await User.find(
     { "cards.cardId": String(cardId) },
-    { userId: 1, username: 1, firstName: 1, cards: 1 }
+    { userId: 1, username: 1, firstName: 1, lastName: 1, cards: 1 }
   ).lean();
 
   let totalOwned = 0;
@@ -237,19 +254,16 @@ async function getGlobalCardStats(cardId) {
     const count = Number(card.count || 0);
     totalOwned += count;
 
-    const displayName =
-      u.username ? `@${u.username}` :
-      u.firstName ? u.firstName :
-      `Unknown User (${u.userId})`;
-
     catchers.push({
       userId: u.userId,
-      name: displayName,
+      username: u.username || "",
+      firstName: u.firstName || "",
+      lastName: u.lastName || "",
       count,
     });
   }
 
-  catchers.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  catchers.sort((a, b) => b.count - a.count || getStoredFullName(a).localeCompare(getStoredFullName(b)));
 
   return {
     totalOwned,
@@ -257,26 +271,25 @@ async function getGlobalCardStats(cardId) {
   };
 }
 
-function buildCheckCaption(photoDoc, stats) {
+function buildCheckCaptionHTML(photoDoc, stats) {
   const rarityEmoji = getRarityEmoji(photoDoc.rarity);
-
   const lines = [
-    `OwO! Check out this character!`,
+    `<b>OwO! Check out this character!</b>`,
     ``,
-    `${photoDoc.anime}`,
-    `${photoDoc.cardId}: ${photoDoc.name}`,
-    `(${rarityEmoji} RARITY: ${photoDoc.rarity})`,
+    `<b>${escapeHtml(photoDoc.anime)}</b>`,
+    `<b>${escapeHtml(photoDoc.cardId)}:</b> ${escapeHtml(photoDoc.name)}`,
+    `(${rarityEmoji} <b>RARITY:</b> ${escapeHtml(photoDoc.rarity)})`,
     ``,
-    `🌍 CAUGHT GLOBALLY: ${stats.totalOwned} TIMES`,
+    `🌍 <b>CAUGHT GLOBALLY:</b> ${stats.totalOwned} TIMES`,
     ``,
-    `🏅 TOP 10 CATCHERS OF THIS CHARACTER!`,
+    `🏅 <b>TOP 10 CATCHERS OF THIS CHARACTER!</b>`,
   ];
 
   if (!stats.topCatchers.length) {
     lines.push(`↪ No catch data yet`);
   } else {
     for (const c of stats.topCatchers) {
-      lines.push(`↪ ${c.name} x${c.count}`);
+      lines.push(`↪ ${mentionStoredUser(c)} x${c.count}`);
     }
   }
 
@@ -286,6 +299,10 @@ function buildCheckCaption(photoDoc, stats) {
 function getRandomItem(arr) {
   if (!Array.isArray(arr) || !arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function exactCommandRegex(cmd) {
+  return new RegExp(`^\\/${cmd}(?:@${BOT_USERNAME})?$`, "i");
 }
 
 function commandTextMatches(text = "", cmd = "") {
@@ -326,7 +343,7 @@ function buildHaremCaption(userDoc, page = 1, pageSize = HAREM_PAGE_SIZE) {
   const safePage = Math.max(1, Math.min(page, totalPages));
   const current = pages[safePage - 1] || [];
 
-  const headerName = userDoc?.firstName || userDoc?.username || `User ${userDoc?.userId || ""}`;
+  const headerName = getStoredFullName(userDoc) || userDoc?.username || `User ${userDoc?.userId || ""}`;
   const totalCardsOwned = cards.reduce((a, b) => a + Number(b.count || 0), 0);
 
   const lines = [];
@@ -369,6 +386,7 @@ function buildProfileText(userDoc, totalPhotoCount = 0) {
   const exp = Number(userDoc?.exp || 0);
   const lv = getLevelFromExp(exp);
   const bar = makeProgressBar(lv.progressPercent, 10);
+
   const rarityCounts = {};
   for (const r of RARITY_ORDER) rarityCounts[r] = { unique: 0, total: 0 };
   for (const c of cards) {
@@ -378,7 +396,7 @@ function buildProfileText(userDoc, totalPhotoCount = 0) {
     rarityCounts[r].total += Number(c.count || 1);
   }
 
-  const username = userDoc?.username ? `@${userDoc.username}` : (userDoc?.firstName || "Unknown");
+  const username = getStoredFullName(userDoc) || userDoc?.username || "Unknown";
   const fav = userDoc?.favoriteCardId
     ? cards.find((c) => c.cardId === String(userDoc.favoriteCardId))
     : null;
@@ -403,30 +421,6 @@ function buildProfileText(userDoc, totalPhotoCount = 0) {
   }
 
   return lines.join("\n");
-}
-
-function buildCatchSuccessText(card, claimer) {
-  const emoji = getRarityEmoji(card.rarity);
-  return [
-    `🎉 YOU GOT A NEW CHARACTER!`,
-    ``,
-    `👤 Claimed by: ${claimer}`,
-    `${emoji} Name: ${card.name}`,
-    `🆔 ID: ${card.cardId}`,
-    `🏷 RARITY: ${card.rarity}`,
-    `🌴 ANIME: ${card.anime}`,
-    ``,
-    `❄️ CHECK YOUR /harem !`,
-  ].join("\n");
-}
-
-function buildAlreadyCaughtText(caughtByName = "Someone") {
-  return [
-    `❌ CHARACTER ALREADY CAUGHT`,
-    ``,
-    `Caught by: ${caughtByName}`,
-    `🥤 Wait for new character to spawn.`,
-  ].join("\n");
 }
 
 function buildWrongNameText(guess) {
@@ -464,6 +458,7 @@ const userSchema = new mongoose.Schema({
   userId: { type: Number, required: true, unique: true, index: true },
   username: { type: String, default: "" },
   firstName: { type: String, default: "" },
+  lastName: { type: String, default: "" },
   exp: { type: Number, default: 0 },
   favoriteCardId: { type: String, default: "" },
   cards: { type: [userCardSchema], default: [] },
@@ -512,7 +507,11 @@ const Transfer = mongoose.model("Transfer", transferSchema);
 // -------------------- DB HELPERS --------------------
 async function ensureUserDoc(tgUser) {
   if (!tgUser?.id) return null;
-  const update = { username: tgUser.username || "", firstName: tgUser.first_name || "" };
+  const update = {
+    username: tgUser.username || "",
+    firstName: tgUser.first_name || "",
+    lastName: tgUser.last_name || "",
+  };
   return User.findOneAndUpdate(
     { userId: tgUser.id },
     { $set: update, $setOnInsert: { exp: 0, favoriteCardId: "", cards: [] } },
@@ -536,16 +535,20 @@ async function addCardToUser(tgUser, photoDoc, qty = 1) {
 
   const count = Math.max(1, Number(qty || 1));
   const idx = userDoc.cards.findIndex((c) => c.cardId === photoDoc.cardId);
-  if (idx >= 0) userDoc.cards[idx].count += count;
-  else userDoc.cards.push({
-    cardId: photoDoc.cardId,
-    name: photoDoc.name,
-    normalizedName: photoDoc.normalizedName,
-    rarity: photoDoc.rarity,
-    anime: photoDoc.anime,
-    fileId: photoDoc.fileId,
-    count,
-  });
+
+  if (idx >= 0) {
+    userDoc.cards[idx].count += count;
+  } else {
+    userDoc.cards.push({
+      cardId: photoDoc.cardId,
+      name: photoDoc.name,
+      normalizedName: photoDoc.normalizedName,
+      rarity: photoDoc.rarity,
+      anime: photoDoc.anime,
+      fileId: photoDoc.fileId,
+      count,
+    });
+  }
 
   userDoc.exp = Number(userDoc.exp || 0) + (Number(RARITY_EXP[photoDoc.rarity] || 1) * count);
   await userDoc.save();
@@ -560,14 +563,20 @@ async function removeCardFromUser(userId, cardId, qty = 1) {
   if (index < 0) return { ok: false, reason: "Card not found in inventory." };
 
   const count = Math.max(1, Number(qty || 1));
-  if (Number(userDoc.cards[index].count || 0) < count) return { ok: false, reason: "Not enough quantity." };
+  if (Number(userDoc.cards[index].count || 0) < count) {
+    return { ok: false, reason: "Not enough quantity." };
+  }
 
   userDoc.cards[index].count -= count;
   const removedCardSnapshot = { ...userDoc.cards[index].toObject() };
+
   if (userDoc.favoriteCardId && userDoc.favoriteCardId === String(cardId) && userDoc.cards[index].count <= 0) {
     userDoc.favoriteCardId = "";
   }
-  if (userDoc.cards[index].count <= 0) userDoc.cards.splice(index, 1);
+
+  if (userDoc.cards[index].count <= 0) {
+    userDoc.cards.splice(index, 1);
+  }
 
   await userDoc.save();
   return { ok: true, userDoc, removedCardSnapshot };
@@ -585,7 +594,9 @@ bot.use(async (ctx, next) => {
   } catch (err) {
     console.error("BOT ERROR:", err);
     try {
-      if (ctx.chat?.type === "private") await ctx.reply("⚠️ Something went wrong. Please try again.");
+      if (ctx.chat?.type === "private") {
+        await ctx.reply("⚠️ Something went wrong. Please try again.");
+      }
     } catch (_) {}
   }
 });
@@ -609,6 +620,7 @@ bot.start(async (ctx) => {
       `/harem`,
       `/fav <id>`,
       `/bika <name>`,
+      `/check <id>`,
     ].join("\n"));
   }
 
@@ -757,7 +769,8 @@ bot.command("admin_users", async (ctx) => {
   const lines = ["👤 USER LIST", ""];
   for (const u of users) {
     const total = (u.cards || []).reduce((a, b) => a + Number(b.count || 0), 0);
-    lines.push(`• ${u.firstName || u.username || u.userId} | ID: ${u.userId} | Cards: ${total}`);
+    const display = getStoredFullName(u) || u.username || u.userId;
+    lines.push(`• ${display} | ID: ${u.userId} | Cards: ${total}`);
   }
   return ctx.reply(lines.join("\n"));
 });
@@ -768,7 +781,9 @@ bot.command("admin_groups", async (ctx) => {
   if (!groups.length) return ctx.reply("No groups.");
 
   const lines = ["👥 GROUP LIST", ""];
-  for (const g of groups) lines.push(`• ${g.title || g.groupId} | ${g.groupId} | ${g.isApproved ? "APPROVED" : "PENDING"}`);
+  for (const g of groups) {
+    lines.push(`• ${g.title || g.groupId} | ${g.groupId} | ${g.isApproved ? "APPROVED" : "PENDING"}`);
+  }
   return ctx.reply(lines.join("\n"));
 });
 
@@ -778,36 +793,42 @@ bot.command("admin_photos", async (ctx) => {
   if (!photos.length) return ctx.reply("No photos.");
 
   const lines = ["🖼 PHOTO LIST", ""];
-  for (const p of photos) lines.push(`• ${p.cardId} | ${p.name} | ${p.rarity} | ${p.anime}`);
+  for (const p of photos) {
+    lines.push(`• ${p.cardId} | ${p.name} | ${p.rarity} | ${p.anime}`);
+  }
   return ctx.reply(lines.join("\n"));
 });
 
+// -------------------- CHECK --------------------
 bot.hears(/^\/check(?:@\w+)?\s+(\S+)$/i, async (ctx) => {
   const cardId = String(ctx.match[1] || "").trim();
   if (!cardId) return;
 
   const photoDoc = await Photo.findOne({ cardId }).lean();
-  if (!photoDoc) {
-    return ctx.reply(`❌ Character ID ${cardId} not found.`);
-  }
+  if (!photoDoc) return ctx.reply(`❌ Character ID ${cardId} not found.`);
 
   const stats = await getGlobalCardStats(cardId);
-  const caption = buildCheckCaption(photoDoc, stats);
-
-  return ctx.replyWithPhoto(photoDoc.fileId, { caption });
+  const caption = buildCheckCaptionHTML(photoDoc, stats);
+  return ctx.replyWithPhoto(photoDoc.fileId, {
+    caption,
+    parse_mode: "HTML",
+  });
 });
 
 // -------------------- PROFILE --------------------
 bot.hears(/^\/profile(?:@\w+)?$/i, async (ctx) => {
   await ensureUserDoc(ctx.from);
+
   const [userDoc, totalPhotoCount] = await Promise.all([
     User.findOne({ userId: ctx.from.id }).lean(),
     Photo.countDocuments(),
   ]);
+
   if (!userDoc) return ctx.reply("No profile yet.");
 
   const cover = getFavoriteOrRandomCard(userDoc);
   const text = buildProfileText(userDoc, totalPhotoCount);
+
   if (cover?.fileId) return ctx.replyWithPhoto(cover.fileId, { caption: text });
   return ctx.reply(text);
 });
@@ -822,6 +843,7 @@ async function sendHaremPage(ctx, targetUserId, page = 1, isCallback = false) {
 
   const cover = getFavoriteOrRandomCard(userDoc);
   const { caption, safePage, totalPages } = buildHaremCaption(userDoc, page, HAREM_PAGE_SIZE);
+
   const keyboard = Markup.inlineKeyboard([
     [
       Markup.button.callback("⬅ Back", `harem:${targetUserId}:${safePage - 1}`),
@@ -832,9 +854,14 @@ async function sendHaremPage(ctx, targetUserId, page = 1, isCallback = false) {
 
   if (isCallback) {
     try {
-      await ctx.editMessageMedia({ type: "photo", media: cover.fileId, caption }, { reply_markup: keyboard.reply_markup });
+      await ctx.editMessageMedia(
+        { type: "photo", media: cover.fileId, caption },
+        { reply_markup: keyboard.reply_markup }
+      );
     } catch {
-      try { await ctx.editMessageCaption(caption, { reply_markup: keyboard.reply_markup }); } catch (_) {}
+      try {
+        await ctx.editMessageCaption(caption, { reply_markup: keyboard.reply_markup });
+      } catch (_) {}
     }
     return ctx.answerCbQuery();
   }
@@ -842,11 +869,14 @@ async function sendHaremPage(ctx, targetUserId, page = 1, isCallback = false) {
   return ctx.replyWithPhoto(cover.fileId, { caption, ...keyboard });
 }
 
-bot.hears(/^\/harem(?:@\w+)?$/i, async (ctx) => {
+bot.hears(exactCommandRegex("harem"), async (ctx) => {
   if (["group", "supergroup"].includes(ctx.chat?.type)) {
     const approved = await isApprovedGroup(ctx.chat.id);
-    if (!approved) return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+    if (!approved) {
+      return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+    }
   }
+
   await ensureUserDoc(ctx.from);
   return sendHaremPage(ctx, ctx.from.id, 1, false);
 });
@@ -854,14 +884,20 @@ bot.hears(/^\/harem(?:@\w+)?$/i, async (ctx) => {
 bot.action(/^harem:(\d+):(-?\d+)$/, async (ctx) => {
   const targetUserId = Number(ctx.match[1]);
   let page = Number(ctx.match[2]);
-  if (ctx.from?.id !== targetUserId && !isAdmin(ctx.from?.id)) return ctx.answerCbQuery("Not allowed.");
+
+  if (ctx.from?.id !== targetUserId && !isAdmin(ctx.from?.id)) {
+    return ctx.answerCbQuery("Not allowed.");
+  }
 
   const userDoc = await User.findOne({ userId: targetUserId }).lean();
-  if (!userDoc || !userDoc.cards?.length) return ctx.answerCbQuery("No cards.");
+  if (!userDoc || !userDoc.cards?.length) {
+    return ctx.answerCbQuery("No cards.");
+  }
 
   const totalPages = Math.max(1, chunkArray(buildHaremLines(userDoc.cards), HAREM_PAGE_SIZE).length);
   if (page < 1) page = totalPages;
   if (page > totalPages) page = 1;
+
   return sendHaremPage(ctx, targetUserId, page, true);
 });
 
@@ -925,11 +961,16 @@ bot.action(/^fav_no:(\d+)$/, async (ctx) => {
 // -------------------- GIFT WITH CONFIRM / CANCEL --------------------
 bot.hears(/^\.gift\s+(\S+)(?:\s+(\d+))?$/i, async (ctx) => {
   if (!["group", "supergroup"].includes(ctx.chat?.type)) return;
+
   const approved = await isApprovedGroup(ctx.chat.id);
-  if (!approved) return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+  if (!approved) {
+    return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+  }
 
   const replyTo = ctx.message?.reply_to_message;
-  if (!replyTo?.from?.id) return ctx.reply("❌ Reply to the target user's message.\nExample: .gift 1001");
+  if (!replyTo?.from?.id) {
+    return ctx.reply("❌ Reply to the target user's message.\nExample: .gift 1001");
+  }
 
   const senderId = ctx.from?.id;
   const receiverId = replyTo.from.id;
@@ -949,20 +990,20 @@ bot.hears(/^\.gift\s+(\S+)(?:\s+(\d+))?$/i, async (ctx) => {
 
   const emoji = getRarityEmoji(card.rarity);
   const previewText = [
-    `🎁 GIFT PREVIEW`,
+    `🎁 <b>GIFT PREVIEW</b>`,
     ``,
-    `From: ${ctx.from.first_name || ctx.from.username || ctx.from.id}`,
-    `To: ${replyTo.from.first_name || replyTo.from.username || replyTo.from.id}`,
-    `Card: ${emoji} ${card.name}`,
-    `ID: ${card.cardId}`,
-    `Anime: ${card.anime}`,
+    `From: ${mentionUser(ctx.from)}`,
+    `To: ${mentionUser(replyTo.from)}`,
+    `Card: ${emoji} ${escapeHtml(card.name)}`,
+    `ID: ${escapeHtml(card.cardId)}`,
+    `Anime: ${escapeHtml(card.anime)}`,
     `Qty: ${qty}`,
     ``,
     `Are you sure you want to send this card?`,
   ].join("\n");
 
   const payload = [senderId, receiverId, card.cardId, qty].join(":");
-  return ctx.reply(previewText, Markup.inlineKeyboard([
+  return ctx.replyWithHTML(previewText, Markup.inlineKeyboard([
     [
       Markup.button.callback("✅ Confirm", `gift_confirm:${payload}`),
       Markup.button.callback("❌ Cancel", `gift_cancel:${senderId}`),
@@ -987,16 +1028,19 @@ bot.action(/^gift_confirm:(\d+):(\d+):([^:]+):(\d+)$/, async (ctx) => {
 
   const card = removal.removedCardSnapshot;
   const idx = receiverUser.cards.findIndex((c) => c.cardId === card.cardId);
-  if (idx >= 0) receiverUser.cards[idx].count += qty;
-  else receiverUser.cards.push({
-    cardId: card.cardId,
-    name: card.name,
-    normalizedName: card.normalizedName,
-    rarity: card.rarity,
-    anime: card.anime,
-    fileId: card.fileId,
-    count: qty,
-  });
+  if (idx >= 0) {
+    receiverUser.cards[idx].count += qty;
+  } else {
+    receiverUser.cards.push({
+      cardId: card.cardId,
+      name: card.name,
+      normalizedName: card.normalizedName,
+      rarity: card.rarity,
+      anime: card.anime,
+      fileId: card.fileId,
+      count: qty,
+    });
+  }
   await receiverUser.save();
 
   await Transfer.create({
@@ -1010,7 +1054,9 @@ bot.action(/^gift_confirm:(\d+):(\d+):([^:]+):(\d+)$/, async (ctx) => {
   });
 
   const emoji = getRarityEmoji(card.rarity);
-  await ctx.editMessageText(`✅ Gift sent successfully.\n\nCard: ${emoji} ${card.name}\nID: ${card.cardId}\nQty: ${qty}`);
+  await ctx.editMessageText(
+    `✅ Gift sent successfully.\n\nCard: ${emoji} ${card.name}\nID: ${card.cardId}\nQty: ${qty}`
+  );
   return ctx.answerCbQuery("Gift confirmed.");
 });
 
@@ -1024,8 +1070,11 @@ bot.action(/^gift_cancel:(\d+)$/, async (ctx) => {
 // -------------------- CLAIM --------------------
 async function handleClaim(ctx, guessRaw) {
   if (!["group", "supergroup"].includes(ctx.chat?.type)) return;
+
   const approved = await isApprovedGroup(ctx.chat.id);
-  if (!approved) return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+  if (!approved) {
+    return ctx.reply(`❌ This group is not approved.\nOwner approval required: ${OWNER_USERNAME}`);
+  }
 
   const guessText = String(guessRaw || "").trim();
   if (!guessText) return;
@@ -1034,7 +1083,13 @@ async function handleClaim(ctx, guessRaw) {
   if (!groupDoc?.activeDrop || !groupDoc.activeDrop.cardId) return;
 
   if (groupDoc.activeDrop.isClaimed) {
-    return ctx.reply(buildAlreadyCaughtText(groupDoc.activeDrop.claimedByName || "Someone"));
+    const caughtBy = groupDoc.activeDrop.claimedByUserId
+      ? `<a href="tg://user?id=${groupDoc.activeDrop.claimedByUserId}">${escapeHtml(groupDoc.activeDrop.claimedByName || "Someone")}</a>`
+      : escapeHtml(groupDoc.activeDrop.claimedByName || "Someone");
+
+    return ctx.replyWithHTML(
+      `❌ <b>CHARACTER ALREADY CAUGHT</b>\n\nCaught by: ${caughtBy}\n🥤 Wait for new character to spawn.`
+    );
   }
 
   const guess = normalizeName(guessText);
@@ -1042,6 +1097,8 @@ async function handleClaim(ctx, guessRaw) {
   if (guess !== target) {
     return ctx.reply(buildWrongNameText(guessText));
   }
+
+  const claimerDisplay = getTelegramFullName(ctx.from) || ctx.from.username || String(ctx.from.id);
 
   const updated = await Group.findOneAndUpdate(
     {
@@ -1053,7 +1110,7 @@ async function handleClaim(ctx, guessRaw) {
       $set: {
         "activeDrop.isClaimed": true,
         "activeDrop.claimedByUserId": ctx.from.id,
-        "activeDrop.claimedByName": ctx.from.first_name || ctx.from.username || String(ctx.from.id),
+        "activeDrop.claimedByName": claimerDisplay,
       },
     },
     { new: true }
@@ -1061,7 +1118,13 @@ async function handleClaim(ctx, guessRaw) {
 
   if (!updated?.activeDrop?.isClaimed || Number(updated.activeDrop.claimedByUserId) !== Number(ctx.from.id)) {
     const latest = await Group.findOne({ groupId: ctx.chat.id }).lean();
-    return ctx.reply(buildAlreadyCaughtText(latest?.activeDrop?.claimedByName || "Someone"));
+    const caughtBy = latest?.activeDrop?.claimedByUserId
+      ? `<a href="tg://user?id=${latest.activeDrop.claimedByUserId}">${escapeHtml(latest.activeDrop.claimedByName || "Someone")}</a>`
+      : escapeHtml(latest?.activeDrop?.claimedByName || "Someone");
+
+    return ctx.replyWithHTML(
+      `❌ <b>CHARACTER ALREADY CAUGHT</b>\n\nCaught by: ${caughtBy}\n🥤 Wait for new character to spawn.`
+    );
   }
 
   const photoDoc = await Photo.findOne({ cardId: updated.activeDrop.cardId });
@@ -1071,8 +1134,16 @@ async function handleClaim(ctx, guessRaw) {
   }
 
   await addCardToUser(ctx.from, photoDoc, 1);
-  const claimer = ctx.from.first_name || ctx.from.username || String(ctx.from.id);
-  return ctx.reply(buildCatchSuccessText(photoDoc, claimer));
+
+  return ctx.replyWithHTML(
+    `🎉 <b>YOU GOT A NEW CHARACTER!</b>\n\n` +
+    `👤 Claimed by: ${mentionUser(ctx.from)}\n` +
+    `${getRarityEmoji(photoDoc.rarity)} Name: <b>${escapeHtml(photoDoc.name)}</b>\n` +
+    `🆔 ID: <b>${escapeHtml(photoDoc.cardId)}</b>\n` +
+    `🏷 RARITY: <b>${escapeHtml(photoDoc.rarity)}</b>\n` +
+    `🌴 ANIME: <b>${escapeHtml(photoDoc.anime)}</b>\n\n` +
+    `❄️ CHECK YOUR /harem !`
+  );
 }
 
 bot.hears(/^\/bika(?:@\w+)?\s+(.+)$/i, async (ctx) => handleClaim(ctx, ctx.match[1]));
@@ -1117,13 +1188,9 @@ async function maybeDropCharacter(ctx) {
     `${emoji} A NEW CHARACTER HAS SPAWNED IN THE CHAT!`,
     ``,
     `Old unclaimed drop has expired.`,
-    
     `Rarity: ${photoDoc.rarity}`,
-    
     `Anime: ${photoDoc.anime}`,
-    
-    `ʜᴀʀᴇᴍ ᴜsɪɴɢ /bika [name] `,
-    
+    `Catch using /bika [name]`,
   ].join("\n");
 
   try {
