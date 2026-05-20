@@ -56,7 +56,7 @@ const RARITY_EMOJI = {
   Cataphract: "✨",
   CrossVerse: "⚡",
   Divine: "⚜️",
-  Mystical: "🌸",
+  Mystical: "💮",
   Legendary: "🟡",
   Rare: "🟠",
   Uncommon: "🟣",
